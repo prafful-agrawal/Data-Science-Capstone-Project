@@ -1,0 +1,1023 @@
+---
+title: "Milestone Report - A language model for predictive text application"
+author: "Prafful Agrawal"
+date: "September 15, 2020"
+output: 
+  html_document:
+    theme: lumen
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      cache = TRUE)
+```
+
+---
+
+### INDEX
+
+<details open>
+<summary><strong>Show/Hide</strong></summary>
+
+- [Introduction](#introduction)
+- [Data Acquisition](#data-acquisition)
+- [Summary Statistics](#summary-statistics)
+- [Data Sampling](#data-sampling)
+- [Data Preprocessing](#data-preprocessing)
+- [Exploratory Data Analysis](#exploratory-data-analysis)
+- [Discussion](#discussion)
+- [Appendix](#appendix)
+- [Session Info](#session-info)
+
+</details>
+
+---
+
+### INTRODUCTION
+
+In the *capstone* project of the **Data Science** specialization offered by **Johns Hopkins University** on *[Coursera](https://www.coursera.org/specializations/jhu-data-science)*, a [language model](https://en.wikipedia.org/wiki/Language_model) is generated which can predict the next word on the basis of previously entered text. The model is then used for developing a *web application* which is deployed on [shinyapps.io.](https://www.shinyapps.io/)
+
+This report covers the following steps of the process:
+
+1. Data acquisition.
+
+2. Generating summary statistics.
+
+3. Sampling data for further analysis.
+
+4. Preprocessing the sample data.
+
+5. Exploratory data analysis.
+
+6. Discussion.
+
+The results from this preliminary analysis were considered during the final development.
+
+*The limited processing power available for this project [32-bit Intel Core 2 CPU with 2 GB of RAM] presented interesting challenges which were tackled by adopting the approach to work under the confines of available resources. This resulted in a valuable learning experience.*
+
+---
+
+### DATA ACQUISITION
+
+The data for this project is provided by [SwiftKey](https://en.wikipedia.org/wiki/Microsoft_SwiftKey), the corporate-partner for this project. It contains a collection of texts collected through web crawling publicly available sources. The texts were then processed to allow for [fair use.](https://web.archive.org/web/20160930083655/http://www.corpora.heliohost.org/aboutcorpus.html)
+
+The collection is split into four according to 'language' - English, Finnish, German and Russian. It is further divided into three according to 'type' - Blogs, News and Twitter.
+
+The dataset is available at the following link:
+
+- [Coursera-SwiftKey-Dataset](https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip).
+
+> Please refer the appendix for the code: [Appendix - Acquire data](#acquire-data)
+
+```{r acquire_data}
+# URL of the zip file
+url <- paste0("https://d396qusza40orc.cloudfront.net",
+              "/dsscapstone/dataset/Coursera-SwiftKey.zip")
+
+# Check and download the zip file
+if(!file.exists("Coursera-SwiftKey.zip")) {
+  download.file(url, destfile = "Coursera-SwiftKey.zip")
+}
+```
+
+---
+
+### SUMMARY STATISTICS
+
+The statistics are computed by importing individual files from the 'English' language dataset and populating the list of statistics followed by the immediate removal of the file from memory. This process was adopted to keep the maximum working memory under check.
+
+> Please refer the appendix for the code: [Appendix - Generate summary statistics](#generate-summary-statistics)
+
+```{r summary_statistics}
+# Files present in the 'English' language dataset 
+file_names <- c("blogs", "news", "twitter")
+
+# Paths available in the zip file
+all_paths <- unzip("Coursera-SwiftKey.zip", list = TRUE)
+
+# Paths of the files to be extracted
+file_paths <-
+  grep(pattern = paste0("^.+/en_US\\.", file_names, "\\.txt$",
+                        collapse = "|"),
+       x = all_paths$Name,
+       value = TRUE)
+
+# Reorder paths alphabetically
+file_paths <- file_paths[order(file_paths)]
+
+# Initialize variables for summary statistics
+n_docs <- vector("numeric", 3)
+n_chars <- vector("numeric", 3)
+sizes <- vector("numeric", 3)
+
+# Iterate over the files
+for(i in 1:length(file_paths)) {
+  # Establish the connection
+  conn <- unz("Coursera-SwiftKey.zip", file_paths[i])
+  
+  # Read the file
+  rows <- readLines(conn, encoding = "UTF-8", skipNul = TRUE)
+  
+  # Close the connection
+  close(conn)
+  
+  # Number of documents
+  n_docs[i] <- prettyNum(length(rows), big.mark = ",")
+  
+  # Number of characters
+  n_chars[i] <- prettyNum(sum(nchar(rows)), big.mark = ",")
+  
+  # Size of file in memory
+  sizes[i] <- format(object.size(rows), units = "Mb")
+  
+  # Remove the variables from the memory
+  rm(rows)
+}
+
+# Summary statistics
+summary_statistics <-
+  data.frame("File_name" = file_names,
+             "Number_of_documents" = n_docs,
+             "Number_of_characters" = n_chars,
+             "Size_in_memory" = sizes)
+
+# Remove the variables from the memory
+rm(all_paths, n_docs, n_chars, sizes)
+
+# Display the summary statistics
+knitr::kable(summary_statistics,
+             align = "c",
+             caption = "Summary Statistics")
+```
+
+It is observed that the number of documents is highest in 'Twitter' followed by 'News' and then 'Blogs'; with 'Blogs' having about 60 % lower documents than 'Twitter'.
+
+Whereas, the number of characters is highest in 'Blogs' followed by 'News' and then 'Twitter'; with 'Twitter' having about 20% lower characters than 'Blogs'.
+
+This may be contributed to the character limit in [Twitter](https://developer.twitter.com/en/docs/counting-characters).
+
+---
+
+### DATA SAMPLING
+
+As seen above, the files are rather large for memory. Hence, a **5 % random sample** from each of the three files is taken and written to the disk. The analysis is continued on these samples.
+
+> Please refer the appendix for the code: [Appendix - Sample data](#sample-data)
+
+```{r sample_data}
+# Create a directory to export the samples
+if(!file.exists("./samples")) {dir.create("./samples")}
+
+# Iterate over the files
+for(i in 1:length(file_paths)) {
+  # Establish the connection
+  conn <- unz("Coursera-SwiftKey.zip", file_paths[i])
+  
+  # Read the file
+  rows <- readLines(conn, encoding = "UTF-8", skipNul = TRUE)
+  
+  # Close the connection
+  close(conn)
+  
+  # Set the seed
+  set.seed(1234)
+  
+  # Sample a given fraction of rows
+  sample_rows <- sample(rows, 0.05 * length(rows))
+  
+  # Remove all non-graphical characters
+  sample_rows <-
+    stringr::str_replace_all(string = sample_rows,
+                             pattern = "[^[:graph:]]",
+                             replacement = " ")
+  
+  # Export the sample to a new file
+  write(sample_rows,
+        file = paste0("./samples/sample_en_US_",
+                      file_names[i], ".txt"))
+  
+  # Remove the variables from the memory
+  rm(rows, sample_rows)
+}
+```
+
+---
+
+### DATA PREPROCESSING
+
+During preprocessing, the following steps are carried out:
+
+1. Import sample file (one at a time).
+
+2. Create corpus using the `quanteda` package.
+
+3. Convert corpus to lower case.
+
+4. Implement tokenization.
+
+5. Remove punctuations and separators.
+
+6. Remove numbers and symbols.
+
+7. Remove URLs.
+
+8. Next, remove tokens with only 1 or 2 characters.
+
+9. Remove english stopwords available from the `stopwords` package.
+
+10. Remove profanities available from the `lexicon` package.
+
+11. Generate document feature matrix for each of the first three ngrams (n = 1, 2 and 3).
+
+12. Sort the features according to their frequency in decreasing order.
+
+13. Compile the top 15 features for every ngram.
+
+14. Evaluate number of unique features.
+
+15. Determine total frequency of their occurence.
+
+16. Generate cumulative frequency function for every ngram.
+
+17. Finally, repeat the above process for the remaining sample files.
+
+> Please refer the appendix for the code: [Appendix - Preprocess data](#preprocess-data)
+
+```{r preprocess_data}
+# Import the 'quanteda' package
+suppressPackageStartupMessages(library(quanteda))
+
+# Initialize variables for top 15 features
+top15_feat <- character()
+top15_freq <- numeric()
+
+# Initialize variables for feature frequencies
+unq_feat <- numeric()
+tot_freq <- numeric()
+
+# Initialize a list for cumulative frequency functions
+cum_freq <- vector("list", length(file_names))
+names(cum_freq) <- file_names
+
+# Initialize a temporary sub-list
+cum_freq_temp <- vector("list", 3)
+names(cum_freq_temp) <- c("n1", "n2", "n3")
+
+# Iterate over the files
+for(i in 1:length(file_names)) {
+  # Establish the connection
+  conn <- file(paste0("./samples/sample_en_US_",
+                      file_names[i], ".txt"))
+  
+  # Read the file
+  rows <- readLines(conn, encoding = "UTF-8", skipNul = TRUE)
+  
+  # Close the connection
+  close(conn)
+  
+  # Create a corpus
+  db_corpus <- corpus(rows)
+  
+  # Convert the corpus to lower case
+  db_corpus <- tolower(db_corpus)
+  
+  # Tokenize
+  db_tokens <- tokens(db_corpus,
+                      remove_punct = TRUE,
+                      remove_symbols = TRUE,
+                      remove_numbers = TRUE,
+                      remove_url = TRUE,
+                      remove_separators = TRUE)
+  
+  # Remove tokens with less than 3 characters
+  db_tokens <- tokens_remove(db_tokens, min_nchar = 3)
+  
+  # Remove the stopwords
+  db_tokens <- tokens_remove(db_tokens,
+                             stopwords::stopwords("en"),
+                             valuetype = "fixed")
+
+  # Remove the profanities
+  db_tokens <- tokens_remove(db_tokens,
+                             lexicon::profanity_zac_anger,
+                             valuetype = "fixed")
+  
+  # Iterate over the ngrams
+  for(n in 1:3) {
+    # Generate the ngram
+    db_ngram <- tokens_ngrams(db_tokens,
+                              n = n,
+                              concatenator = " ")
+    
+    # Document feature matrix
+    db_dfm <- dfm(db_ngram, tolower = FALSE)
+    
+    # Sort the features in decreasing order
+    db_dfm <- dfm_sort(db_dfm)
+    
+    # Top 15 features
+    top15_feat <- c(top15_feat, featnames(db_dfm)[1:15])
+    top15_freq <- c(top15_freq, unname(featfreq(db_dfm)[1:15]))
+    
+    # Feature frequencies
+    unq_feat <- c(unq_feat, nfeat(db_dfm))
+    tot_freq <- c(tot_freq, sum(featfreq(db_dfm)))
+    
+    # Cumulative frequency function
+    cum_freq_temp[[paste0("n", n)]] <-
+      approxfun(x = (0:nfeat(db_dfm))/nfeat(db_dfm) * 100,
+                y = c(0, cumsum(featfreq(db_dfm))/
+                        sum(featfreq(db_dfm)) * 100))
+  }
+  
+  # Collate the cumulative frequency functions
+  cum_freq[[i]] <- cum_freq_temp
+  
+  # Remove the variables from the memory
+  rm(rows, db_corpus, db_tokens, db_ngram, db_dfm)
+}
+
+# Compile the top 15 features
+top15 <- 
+  data.frame("feature" = top15_feat,
+             "frequency" = top15_freq,
+             "ngram" = rep(c("n1", "n2", "n3"),
+                           each = 15, times = 3),
+             "file" = rep(file_names, each = 45),
+             stringsAsFactors = FALSE)
+
+# Compile the feature frequencies
+feat_freq <- 
+  data.frame("unique_features" = unq_feat,
+             "total_frequency" = tot_freq,
+             "ngram" = rep(c("n1", "n2", "n3"),
+                           times = 3),
+             "file" = rep(file_names, each = 3),
+             stringsAsFactors = FALSE)
+
+# Remove the variables from the memory
+rm(unq_feat, tot_freq, top15_feat, top15_freq, cum_freq_temp)
+```
+
+---
+
+### EXPLORATORY DATA ANALYSIS
+
+The *top 15* features are compiled for each and every combination of the files and ngrams. Plots of the resulting features are prepared. Furthermore, among the top 15 features for a given ngram, the number of features common between the three files is evaluated.
+
+> Please refer the appendix for the code: [Appendix - Exploratory data analysis 01](#exploratory-data-analysis-01)
+
+The results are given below:
+
+<details open>
+<summary><strong>Show/Hide</strong></summary>
+
+```{r exploratory_data_analysis_01, fig.width=10, comment = NA}
+# Import the packages
+suppressPackageStartupMessages(library(ggplot2))
+
+# Initialize titles
+ttl <- c("UNIGRAMS", "BIGRAMS", "TRIGRAMS")
+
+# Iterate over the ngrams
+for(n in 1:3) {
+  # Extract the ngram from each file
+  f1 <- top15[top15$ngram == paste0("n", n) &
+                top15$file == file_names[1], ]
+  f2 <- top15[top15$ngram == paste0("n", n) &
+                top15$file == file_names[2], ]
+  f3 <- top15[top15$ngram == paste0("n", n) &
+                top15$file == file_names[3], ]
+  
+  # Find the maximum limit
+  mx <- max(f1$frequency, f2$frequency, f3$frequency)
+  
+  # Generate the plots
+  p <- lapply(list(f1, f2, f3), function(f) {
+    # Initialize the plot
+    f %>% ggplot(aes(x = frequency,
+                     y = reorder(feature, frequency))) +
+      geom_col() +
+      
+      # Add the text label
+      geom_text(aes(label = frequency),
+                color = "white",
+                size = 3,
+                position = position_stack(vjust = 0.5)) +
+      
+      # Add the axis limits
+      scale_x_continuous(limits = c(0, mx)) +
+      
+      # Add the title and axes labels
+      labs(title = f$file[1],
+           x = "Frequency",
+           y = "Features")
+  })
+  
+  # Initialize top heading
+  top <- grid::textGrob(paste("TOP 15", ttl[n]),
+                        gp = grid::gpar(fontface = "bold",
+                                        fontsize = 14))
+  
+  # Arrange and display the plots
+  gridExtra::grid.arrange(p[[1]], p[[2]], p[[3]],
+                          nrow = 1,
+                          top = top)
+  
+  # Number of features common between the files
+  cat(paste0("Among the top 15 ", ttl[n],
+             ", the number of features common between:",
+             "\n - ", f1$file[1], " and ", f2$file[1], " = ",
+             length(intersect(f1$feature, f2$feature)),
+             "\n - ", f1$file[1], " and ", f3$file[1], " = ",
+             length(intersect(f1$feature, f3$feature)),
+             "\n - ", f2$file[1], " and ", f3$file[1], " = ",
+             length(intersect(f2$feature, f3$feature))))
+  
+  # Remove the variables from the memory
+  rm(f1, f2, f3, mx, p, top)
+}
+```
+
+</details>
+
+From above, the following observations are made:
+
+- The drop in frequency from a unigram to bigram or from a bigram to trigram is rather steep. For example, in 'Twitter', the frequency for the top unigram is 7544 while for the bigram is 818 and for the trigram is 87, i.e. frequency reduces by a factor of 10 each.
+
+- The number of features common between the three files also decreases moving from unigram to bigram to trigram; reaching *almost zero* for the trigrams.
+
+- The ngram frequencies for 'Blogs' is comparatively lower than that of the ngram frequencies in other files. For example, the frequency for the top bigram in 'Blogs' is about 60 % lower as compared to 'News' and about 70 % lower as compared to 'Twitter'.
+
+**Next,** comparision between the number of *unique* features and their cumulative frequeny of occurence is carried out. Additionally, the number of unique features required to cover 50 % and 90 % of all word occurences is estimated.
+
+> Please refer the appendix for the code: [Appendix - Exploratory data analysis 02](#exploratory-data-analysis-02)
+
+The results are given below:
+
+<details open>
+<summary><strong>Show/Hide</strong></summary>
+
+```{r exploratory_data_analysis_02, fig.width=10, comment = NA}
+# Iterate over the ngrams
+for(n in 1:3) {
+  # Generate the plots
+  p <- lapply(file_names, function(fname) {
+    # Extract the cumulative frequency function
+    freq_func <- cum_freq[[fname]][[paste0("n", n)]]
+    
+    # Initialize the x-coordinates for the plot
+    xcoord <- seq(0, 100, 0.5)
+    
+    # Generate the y-coordinates for the plot
+    ycoord <- freq_func(xcoord)
+    
+    # Determine the x-intercepts 
+    xint50 <- round(approxfun(ycoord, xcoord)(50), 1)
+    xint90 <- round(approxfun(ycoord, xcoord)(90), 1)
+    
+    # Construct the text labels
+    lab50 <- paste0(xint50, " % of unique features",
+                    "\nform 50 % of total text.")
+    lab90 <- paste0(xint90, " % of unique features",
+                    "\nform 90 % of total text.")
+    
+    # Initialize the plot
+    g <- ggplot(data = NULL) +
+      geom_line(aes(x = xcoord, y = ycoord)) +
+      
+      # Add the intercepts
+      geom_vline(xintercept = c(xint50, xint90),
+                 linetype = "dashed") +
+      geom_hline(yintercept = c(50, 90),
+                 linetype = "dashed") +
+      geom_point(aes(x = c(xint50, xint90),
+                     y = c(50, 90)),
+                 shape = 4,
+                 size = 8) +
+      
+      # Add the first text label
+      geom_segment(aes(x = 55, xend = xint50,
+                       y = 35, yend = 50),
+                   arrow = arrow(length = unit(0.25, "cm"),
+                                 type = "closed")) +
+      geom_label(aes(label = lab50), x = 55, y = 35) +
+      
+      # Add the second text label
+      geom_segment(aes(x = 50, xend = xint90,
+                       y = 75, yend = 90),
+                   arrow = arrow(length = unit(0.25, "cm"),
+                                 type = "closed")) +
+      geom_label(aes(label = lab90), x = 50, y = 75) +
+      
+      # Add the axes breaks
+      scale_x_continuous(breaks = c(xint50, xint90)) +
+      scale_y_continuous(breaks = c(0, 50, 90, 100)) +
+      
+      # Add the title and axes labels
+      labs(title = fname,
+           x = "Number of unique features (in %)",
+           y = "Cumulative frequency (in %)")
+  })
+  
+  # Initialize top heading
+  top <- grid::textGrob(paste("NUMBER OF UNIQUE", ttl[n],
+                              "VS CUMULATIVE FREQUENCY"),
+                        gp = grid::gpar(fontface = "bold",
+                                        fontsize = 14))
+  
+  # Arrange and display the plots
+  gridExtra::grid.arrange(p[[1]], p[[2]], p[[3]],
+                          nrow = 1,
+                          top = top)
+  
+  # Feature frequencies for the ngram
+  f <- feat_freq[feat_freq$ngram == paste0("n", n), ]
+  f$unique_features <- prettyNum(f$unique_features,
+                                 big.mark = ",")
+  f$total_frequency <- prettyNum(f$total_frequency,
+                                 big.mark = ",")
+  
+  # Display the feature frequencies
+  cat(paste0("FOR ", ttl[n], ":"),
+      paste0(" > In \'", f$file, "\'\n  - ",
+             "Number of unique features = ",
+             f$unique_features, "\n  - ",
+             "Total frequency of occurence = ",
+             f$total_frequency),
+      sep =  "\n")
+  
+  # Remove the variables from the memory
+  rm(p, top, f)
+}
+```
+</details>
+
+From above, it can be observed that:
+
+- In a frequency sorted list of features, around 1 % of unique unigrams cover 50 % of all word occurences. While, roughly 20 % of unique unigrams are sufficient to cover 90 % of all word occurences. This indicates a small fraction of unigrams constitute majority of text.
+
+- But, for bigrams and trigrams, the cumulative frequency rises almost linearly with the number of unique features, which suggests that almost entire text is formed of unique features.
+
+---
+
+### DISCUSSION
+
+From this preliminary analysis, we have observed that:
+
+- The files are quite large and hence, sampling is required.
+
+- The stopwords are removed during this analysis. But, in the final model stopwords will be included. This is because they form the bulk of word occurences and their incorporation should increase the model coverage.
+
+- The features vary greatly across the three files with almost zero common features observed in the top 15 trigrams. Hence, it is suggested that a model is trained on one specific file and deployed for the same.
+
+- Alternately, multiple models can be trained on different files and choosen appropriately according to the application.
+
+- Even though a small proportion of unique unigrams form bulk of the text, it is almost entirely made up of unique bigrams and trigrams. Hence, for higher order ngrams, a large memory is required to retain information of the full span of text.
+
+This preliminary analysis was conducted on a *5 % random sample* of the original data. It is recommended to repeat the analysis on another sample of a different proportion.
+
+The development of the final product is greatly benefited from this analysis.
+
+---
+
+### APPENDIX
+
+#### Acquire data:
+
+<details>
+<summary>Show/Hide</summary>
+
+```{r a01_acquire_data, echo = TRUE, eval = FALSE}
+# URL of the zip file
+url <- paste0("https://d396qusza40orc.cloudfront.net",
+              "/dsscapstone/dataset/Coursera-SwiftKey.zip")
+
+# Check and download the zip file
+if(!file.exists("Coursera-SwiftKey.zip")) {
+  download.file(url, destfile = "Coursera-SwiftKey.zip")
+}
+```
+
+</details>
+
+#### Generate summary statistics:
+
+<details>
+<summary>Show/Hide</summary>
+
+```{r a02_summary_statistics, echo = TRUE, eval = FALSE}
+# Files present in the 'English' language dataset 
+file_names <- c("blogs", "news", "twitter")
+
+# Paths available in the zip file
+all_paths <- unzip("Coursera-SwiftKey.zip", list = TRUE)
+
+# Paths of the files to be extracted
+file_paths <-
+  grep(pattern = paste0("^.+/en_US\\.", file_names, "\\.txt$",
+                        collapse = "|"),
+       x = all_paths$Name,
+       value = TRUE)
+
+# Reorder paths alphabetically
+file_paths <- file_paths[order(file_paths)]
+
+# Initialize variables for summary statistics
+n_docs <- vector("numeric", 3)
+n_chars <- vector("numeric", 3)
+sizes <- vector("numeric", 3)
+
+# Iterate over the files
+for(i in 1:length(file_paths)) {
+  # Establish the connection
+  conn <- unz("Coursera-SwiftKey.zip", file_paths[i])
+  
+  # Read the file
+  rows <- readLines(conn, encoding = "UTF-8", skipNul = TRUE)
+  
+  # Close the connection
+  close(conn)
+  
+  # Number of documents
+  n_docs[i] <- prettyNum(length(rows), big.mark = ",")
+  
+  # Number of characters
+  n_chars[i] <- prettyNum(sum(nchar(rows)), big.mark = ",")
+  
+  # Size of file in memory
+  sizes[i] <- format(object.size(rows), units = "Mb")
+  
+  # Remove the variables from the memory
+  rm(rows)
+}
+
+# Summary statistics
+summary_statistics <-
+  data.frame("File_name" = file_names,
+             "Number_of_documents" = n_docs,
+             "Number_of_characters" = n_chars,
+             "Size_in_memory" = sizes)
+
+# Remove the variables from the memory
+rm(all_paths, n_docs, n_chars, sizes)
+
+# Display the summary statistics
+knitr::kable(summary_statistics,
+             align = "c",
+             caption = "Summary Statistics")
+```
+
+</details>
+
+#### Sample data:
+
+<details>
+<summary>Show/Hide</summary>
+
+```{r a03_sample_data, echo = TRUE, eval = FALSE}
+# Create a directory to export the samples
+if(!file.exists("./samples")) {dir.create("./samples")}
+
+# Iterate over the files
+for(i in 1:length(file_paths)) {
+  # Establish the connection
+  conn <- unz("Coursera-SwiftKey.zip", file_paths[i])
+  
+  # Read the file
+  rows <- readLines(conn, encoding = "UTF-8", skipNul = TRUE)
+  
+  # Close the connection
+  close(conn)
+  
+  # Set the seed
+  set.seed(1234)
+  
+  # Sample a given fraction of rows
+  sample_rows <- sample(rows, 0.05 * length(rows))
+  
+  # Remove all non-graphical characters
+  sample_rows <-
+    stringr::str_replace_all(string = sample_rows,
+                             pattern = "[^[:graph:]]",
+                             replacement = " ")
+  
+  # Export the sample to a new file
+  write(sample_rows,
+        file = paste0("./samples/sample_en_US_",
+                      file_names[i], ".txt"))
+  
+  # Remove the variables from the memory
+  rm(rows, sample_rows)
+}
+```
+
+</details>
+
+#### Preprocess data:
+
+<details>
+<summary>Show/Hide</summary>
+
+```{r a04_preprocess_data, echo = TRUE, eval = FALSE}
+# Import the 'quanteda' package
+suppressPackageStartupMessages(library(quanteda))
+
+# Initialize variables for top 15 features
+top15_feat <- character()
+top15_freq <- numeric()
+
+# Initialize variables for feature frequencies
+unq_feat <- numeric()
+tot_freq <- numeric()
+
+# Initialize a list for cumulative frequency functions
+cum_freq <- vector("list", length(file_names))
+names(cum_freq) <- file_names
+
+# Initialize a temporary sub-list
+cum_freq_temp <- vector("list", 3)
+names(cum_freq_temp) <- c("n1", "n2", "n3")
+
+# Iterate over the files
+for(i in 1:length(file_names)) {
+  # Establish the connection
+  conn <- file(paste0("./samples/sample_en_US_",
+                      file_names[i], ".txt"))
+  
+  # Read the file
+  rows <- readLines(conn, encoding = "UTF-8", skipNul = TRUE)
+  
+  # Close the connection
+  close(conn)
+  
+  # Create a corpus
+  db_corpus <- corpus(rows)
+  
+  # Convert the corpus to lower case
+  db_corpus <- tolower(db_corpus)
+  
+  # Tokenize
+  db_tokens <- tokens(db_corpus,
+                      remove_punct = TRUE,
+                      remove_symbols = TRUE,
+                      remove_numbers = TRUE,
+                      remove_url = TRUE,
+                      remove_separators = TRUE)
+  
+  # Remove tokens with less than 3 characters
+  db_tokens <- tokens_remove(db_tokens, min_nchar = 3)
+  
+  # Remove the stopwords
+  db_tokens <- tokens_remove(db_tokens,
+                             stopwords::stopwords("en"),
+                             valuetype = "fixed")
+  
+  # Remove the profanities
+  db_tokens <- tokens_remove(db_tokens,
+                             lexicon::profanity_zac_anger,
+                             valuetype = "fixed")
+  
+  # Iterate over the ngrams
+  for(n in 1:3) {
+    # Generate the ngram
+    db_ngram <- tokens_ngrams(db_tokens,
+                              n = n,
+                              concatenator = " ")
+    
+    # Document feature matrix
+    db_dfm <- dfm(db_ngram, tolower = FALSE)
+    
+    # Sort the features in decreasing order
+    db_dfm <- dfm_sort(db_dfm)
+    
+    # Top 15 features
+    top15_feat <- c(top15_feat, featnames(db_dfm)[1:15])
+    top15_freq <- c(top15_freq, unname(featfreq(db_dfm)[1:15]))
+    
+    # Feature frequencies
+    unq_feat <- c(unq_feat, nfeat(db_dfm))
+    tot_freq <- c(tot_freq, sum(featfreq(db_dfm)))
+    
+    # Cumulative frequency function
+    cum_freq_temp[[paste0("n", n)]] <-
+      approxfun(x = (0:nfeat(db_dfm))/nfeat(db_dfm) * 100,
+                y = c(0, cumsum(featfreq(db_dfm))/
+                        sum(featfreq(db_dfm)) * 100))
+  }
+  
+  # Collate the cumulative frequency functions
+  cum_freq[[i]] <- cum_freq_temp
+  
+  # Remove the variables from the memory
+  rm(rows, db_corpus, db_tokens, db_ngram, db_dfm)
+}
+
+# Compile the top 15 features
+top15 <- 
+  data.frame("feature" = top15_feat,
+             "frequency" = top15_freq,
+             "ngram" = rep(c("n1", "n2", "n3"),
+                           each = 15, times = 3),
+             "file" = rep(file_names, each = 45),
+             stringsAsFactors = FALSE)
+
+# Compile the feature frequencies
+feat_freq <- 
+  data.frame("unique_features" = unq_feat,
+             "total_frequency" = tot_freq,
+             "ngram" = rep(c("n1", "n2", "n3"),
+                           times = 3),
+             "file" = rep(file_names, each = 3),
+             stringsAsFactors = FALSE)
+
+# Remove the variables from the memory
+rm(unq_feat, tot_freq, top15_feat, top15_freq, cum_freq_temp)
+```
+
+</details>
+
+#### Exploratory data analysis 01:
+
+<details>
+<summary>Show/Hide</summary>
+
+```{r a05_exploratory_data_analysis_01, echo = TRUE, eval = FALSE}
+# Import the packages
+suppressPackageStartupMessages(library(ggplot2))
+
+# Initialize titles
+ttl <- c("UNIGRAMS", "BIGRAMS", "TRIGRAMS")
+
+# Iterate over the ngrams
+for(n in 1:3) {
+  # Extract the ngram from each file
+  f1 <- top15[top15$ngram == paste0("n", n) &
+                top15$file == file_names[1], ]
+  f2 <- top15[top15$ngram == paste0("n", n) &
+                top15$file == file_names[2], ]
+  f3 <- top15[top15$ngram == paste0("n", n) &
+                top15$file == file_names[3], ]
+  
+  # Find the maximum limit
+  mx <- max(f1$frequency, f2$frequency, f3$frequency)
+  
+  # Generate the plots
+  p <- lapply(list(f1, f2, f3), function(f) {
+    # Initialize the plot
+    f %>% ggplot(aes(x = frequency,
+                     y = reorder(feature, frequency))) +
+      geom_col() +
+      
+      # Add the text label
+      geom_text(aes(label = frequency),
+                color = "white",
+                size = 3,
+                position = position_stack(vjust = 0.5)) +
+      
+      # Add the axis limits
+      scale_x_continuous(limits = c(0, mx)) +
+      
+      # Add the title and axes labels
+      labs(title = f$file[1],
+           x = "Frequency",
+           y = "Features")
+  })
+  
+  # Initialize top heading
+  top <- grid::textGrob(paste("TOP 15", ttl[n]),
+                        gp = grid::gpar(fontface = "bold",
+                                        fontsize = 14))
+  
+  # Arrange and display the plots
+  gridExtra::grid.arrange(p[[1]], p[[2]], p[[3]],
+                          nrow = 1,
+                          top = top)
+  
+  # Number of features common between the files
+  cat(paste0("Among the top 15 ", ttl[n],
+             ", the number of features common between:",
+             "\n - ", f1$file[1], " and ", f2$file[1], " = ",
+             length(intersect(f1$feature, f2$feature)),
+             "\n - ", f1$file[1], " and ", f3$file[1], " = ",
+             length(intersect(f1$feature, f3$feature)),
+             "\n - ", f2$file[1], " and ", f3$file[1], " = ",
+             length(intersect(f2$feature, f3$feature))))
+  
+  # Remove the variables from the memory
+  rm(f1, f2, f3, mx, p, top)
+}
+```
+
+</details>
+
+#### Exploratory data analysis 02:
+
+<details>
+<summary>Show/Hide</summary>
+
+```{r a06_exploratory_data_analysis_02, echo = TRUE, eval = FALSE}
+# Iterate over the ngrams
+for(n in 1:3) {
+  # Generate the plots
+  p <- lapply(file_names, function(fname) {
+    # Extract the cumulative frequency function
+    freq_func <- cum_freq[[fname]][[paste0("n", n)]]
+    
+    # Initialize the x-coordinates for the plot
+    xcoord <- seq(0, 100, 0.5)
+    
+    # Generate the y-coordinates for the plot
+    ycoord <- freq_func(xcoord)
+    
+    # Determine the x-intercepts 
+    xint50 <- round(approxfun(ycoord, xcoord)(50), 1)
+    xint90 <- round(approxfun(ycoord, xcoord)(90), 1)
+    
+    # Construct the text labels
+    lab50 <- paste0(xint50, " % of unique features",
+                    "\nform 50 % of total text.")
+    lab90 <- paste0(xint90, " % of unique features",
+                    "\nform 90 % of total text.")
+    
+    # Initialize the plot
+    g <- ggplot(data = NULL) +
+      geom_line(aes(x = xcoord, y = ycoord)) +
+      
+      # Add the intercepts
+      geom_vline(xintercept = c(xint50, xint90),
+                 linetype = "dashed") +
+      geom_hline(yintercept = c(50, 90),
+                 linetype = "dashed") +
+      geom_point(aes(x = c(xint50, xint90),
+                     y = c(50, 90)),
+                 shape = 4,
+                 size = 8) +
+      
+      # Add the first text label
+      geom_segment(aes(x = 55, xend = xint50,
+                       y = 35, yend = 50),
+                   arrow = arrow(length = unit(0.25, "cm"),
+                                 type = "closed")) +
+      geom_label(aes(label = lab50), x = 55, y = 35) +
+      
+      # Add the second text label
+      geom_segment(aes(x = 50, xend = xint90,
+                       y = 75, yend = 90),
+                   arrow = arrow(length = unit(0.25, "cm"),
+                                 type = "closed")) +
+      geom_label(aes(label = lab90), x = 50, y = 75) +
+      
+      # Add the axes breaks
+      scale_x_continuous(breaks = c(xint50, xint90)) +
+      scale_y_continuous(breaks = c(0, 50, 90, 100)) +
+      
+      # Add the title and axes labels
+      labs(title = fname,
+           x = "Number of unique features (in %)",
+           y = "Cumulative frequency (in %)")
+  })
+  
+  # Initialize top heading
+  top <- grid::textGrob(paste("NUMBER OF UNIQUE", ttl[n],
+                              "VS CUMULATIVE FREQUENCY"),
+                        gp = grid::gpar(fontface = "bold",
+                                        fontsize = 14))
+  
+  # Arrange and display the plots
+  gridExtra::grid.arrange(p[[1]], p[[2]], p[[3]],
+                          nrow = 1,
+                          top = top)
+  
+  # Feature frequencies for the ngram
+  f <- feat_freq[feat_freq$ngram == paste0("n", n), ]
+  f$unique_features <- prettyNum(f$unique_features,
+                                 big.mark = ",")
+  f$total_frequency <- prettyNum(f$total_frequency,
+                                 big.mark = ",")
+  
+  # Display the feature frequencies
+  cat(paste0("FOR ", ttl[n], ":"),
+      paste0(" > In \'", f$file, "\'\n  - ",
+             "Number of unique features = ",
+             f$unique_features, "\n  - ",
+             "Total frequency of occurence = ",
+             f$total_frequency),
+      sep =  "\n")
+  
+  # Remove the variables from the memory
+  rm(p, top, f)
+}
+```
+
+</details>
+
+---
+
+### SESSION INFO
+
+```{r session_info}
+sessionInfo()
+```
+
+---
